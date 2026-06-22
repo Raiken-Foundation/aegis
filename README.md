@@ -5,7 +5,9 @@ pattern-matching source code, Aegis runs your app inside a hardened sandbox and
 attacks it over loopback. A `Verified` verdict means the vulnerability was
 genuinely exploited — not that a regex matched a line of code.
 
-This repository hosts the prebuilt, free Aegis binary and its installers.
+This repository hosts the prebuilt, free Aegis CLI binary and its installers.
+Users do **not** need access to the private source repository to install or run
+Aegis.
 
 ---
 
@@ -30,6 +32,16 @@ and puts `aegis` on your `PATH`. Verify with:
 aegis --version
 ```
 
+Optional: install the local daemon used by IDE/MCP integrations:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Raiken-Foundation/aegis/releases/latest/download/aegisd-installer.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Raiken-Foundation/aegis/releases/latest/download/aegisd-installer.ps1 | iex"
+```
+
 > **Available prebuilt platforms:** macOS (Apple Silicon + Intel) are published
 > today. Linux (x64/arm64) and Windows (x64) are produced by the release
 > pipeline — if your platform isn't in the [latest release](https://github.com/Raiken-Foundation/aegis/releases/latest)
@@ -41,18 +53,20 @@ against the published `.sha256`, extract, and move `aegis` onto your `PATH`.
 
 ---
 
-## Quickstart (about a minute)
+## Quickstart
 
 ```bash
-# 1. Check your environment (container runtime, etc.)
-aegis preflight
+# 1. Start the container runtime and check your environment
+aegis sandbox start          # launches Docker / OrbStack / Colima if installed
+aegis doctor                 # checks runtime, AI config, and common setup issues
 
-# 2. Drop a set of real, intentionally-vulnerable demo apps into ./aegis-targets
+# 2. Configure an AI provider for dynamic run-and-attack synthesis
+aegis ai configure           # pick from a list (OpenAI / DeepSeek / OpenRouter / …), paste your key
+aegis ai test                # verify the provider before the first run
+
+# 3. Drop a set of real, intentionally-vulnerable demo apps into ./aegis-targets
 aegis demo init
-
-# 3. Configure an AI provider for dynamic run-and-attack synthesis
 cd aegis-targets
-./configure-ai.sh            # pick DeepSeek / OpenAI / OpenRouter / Ollama / custom
 
 # 4. Let Aegis launch a vulnerable app in the sandbox and attack it
 ./run.sh node-command-injection
@@ -91,7 +105,10 @@ leaks `/etc/passwd` — and the dynamic attack proves it.
 
 | Command | What it does |
 |---|---|
-| `aegis preflight` | Check the host: container runtime, available sandbox backends. |
+| `aegis doctor` | Recommended first check: runtime, AI config, policy/image readiness, and next steps. |
+| `aegis preflight` | Lower-level host/backend check. `doctor` is preferred for users. |
+| `aegis sandbox start` / `status` | Detect and launch the container runtime (Docker/OrbStack/Colima); report backend availability. |
+| `aegis ai configure` / `test` / `status` / `list` | Pick an AI provider, verify connectivity, show config, or list providers. |
 | `aegis demo init` | Write the bundled vulnerable target apps + helper scripts into `./aegis-targets` (no checkout needed). |
 | `aegis validate --finding <f.json> --repo <dir>` | Validate a single finding against a repo. Add `--dynamic` to run-and-attack. |
 | `aegis scan --repo <dir> --scanner semgrep\|trivy --validate` | Run a scanner in a container, import its findings, and validate them. Add `--dynamic` to attack. |
@@ -102,23 +119,58 @@ leaks `/etc/passwd` — and the dynamic attack proves it.
 | `aegis replay --artifact <a.json>` | Re-run a previous validation artifact for reproducibility. |
 | `aegis artifacts list \| prune` | Manage stored validation artifacts. |
 
-Run `aegis <command> --help` for the full flag list. Key flags shared by the
+Run `aegis <command> --help` for the full flag list. Key flags shared by
 validation commands: `--policy <toml>`, `--profile <name>`, `--artifacts-dir
-<dir>`, `--ai` (enable AI assistance), and `--dynamic` (run-and-attack; implies
-`--ai` and requires `sandbox.allow_app_runtime` in policy).
+<dir>`, `--format human|json`, `--ai` (enable AI assistance), and `--dynamic`
+(run-and-attack; implies `--ai` and requires `sandbox.allow_app_runtime` in
+policy).
 
 ---
 
 ## Requirements
 
-1. **A container runtime** — Docker or OrbStack. Confirm with `aegis preflight`.
+1. **A container runtime** — Docker, OrbStack, or Colima. Confirm with `aegis
+   doctor`; start it with `aegis sandbox start`.
 2. **An OpenAI-compatible API key** for dynamic run-and-attack synthesis. Aegis
-   is provider-agnostic: DeepSeek, OpenAI, OpenRouter, a local Ollama, or any
-   custom OpenAI-compatible endpoint all work. `configure-ai.sh` (shipped by
-   `aegis demo init`) writes your choice to a gitignored `.env`; your key never
-   touches a tracked file.
+   is provider-agnostic: run `aegis ai configure` to pick from a list (OpenAI,
+   DeepSeek, OpenRouter, Groq, Together, Mistral, xAI, Fireworks, Perplexity,
+   Azure, a local Ollama, or any custom endpoint) and paste your key. It's saved
+   to `~/.config/aegis/` (the key in a `chmod 600` file).
 
 Static validation needs neither a model nor a network.
+
+---
+
+## Using Aegis On Your Own Web App
+
+From your app repository:
+
+```bash
+aegis init
+aegis doctor
+aegis scan --repo . --scanner semgrep --validate
+aegis scan --repo . --scanner trivy --validate
+```
+
+If you already have a scanner finding:
+
+```bash
+aegis validate --finding finding.json --repo .
+```
+
+For the strongest workflow, configure AI and run the app in the sandbox:
+
+```bash
+aegis ai configure
+aegis ai test
+aegis validate --finding finding.json --repo . --ai --dynamic --policy .aegis/policy.toml
+```
+
+Machine-readable output for CI or scripts:
+
+```bash
+aegis validate --finding finding.json --repo . --format json
+```
 
 ---
 
@@ -136,13 +188,16 @@ Static validation needs neither a model nor a network.
   yet. Check the [releases page](https://github.com/Raiken-Foundation/aegis/releases):
   if it's empty, no release has been published; if it exists but lacks your
   platform, that build isn't out yet (see the platform note under *Install*).
-- **`aegis preflight` reports no backend** — install and start Docker or
-  OrbStack, then re-run. Dynamic runs need a working container runtime.
+- **`aegis doctor` reports no backend** — install and start Docker or OrbStack,
+  then re-run. Dynamic runs need a working container runtime.
 - **Dynamic run says the plan was invalid / no verdict** — the model must be
   capable enough to emit a valid run-and-attack plan with the
   `AEGIS_VERIFIED` / `AEGIS_NOT_VERIFIED` markers. Use a strong hosted model
   (re-run `./configure-ai.sh` to switch providers); very small local models
   often fail here.
+- **`aegis ai status` says to re-run `aegis ai configure`** — your local config
+  was written by an older setup flow. Re-run `aegis ai configure`; Aegis will
+  keep secrets out of terminal output.
 - **`command not found: aegis`** — the install dir isn't on your `PATH`. Open a
   new shell, or add the directory the installer printed (e.g. `~/.local/bin`).
 - **macOS "cannot be opened because the developer cannot be verified"** — the
